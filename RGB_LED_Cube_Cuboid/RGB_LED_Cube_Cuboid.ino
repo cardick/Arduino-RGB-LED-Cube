@@ -36,8 +36,8 @@ const uint8_t blankPin = 4;
 
 // Size definition of the cube or cuboid
 const uint8_t LED_ROWS = 1;
-const uint8_t LED_COLUMNS = 1;
-const uint8_t LED_LAYERS = 2;
+const uint8_t LED_COLUMNS = 4;
+const uint8_t LED_LAYERS = 4;
 
 // 4 bit - bit angle modulation (BAM)
 const uint8_t BAM = 4;
@@ -78,7 +78,7 @@ void setup() {
 
   // triggers the time of the interrupt
   // an interval faster than 70 seems to mix the colors between layers
-  OCR1A = 70;
+  OCR1A = 40;
 
   TIMSK1 = B00000010;
 
@@ -106,30 +106,50 @@ void setup() {
 */
 void loop() {
     // functional check
-    setLed(0, 0, 0, MAXBRIGHT, MINBRIGHT, MINBRIGHT);
-    setLed(0, 0, 1, MINBRIGHT, MINBRIGHT, MAXBRIGHT);
-    delay(500);
-    setLed(0, 0, 0, MINBRIGHT, MAXBRIGHT, MINBRIGHT);
-    setLed(0, 0, 1, MAXBRIGHT, MINBRIGHT, MINBRIGHT);
-    delay(500);
-    setLed(0, 0, 0, MINBRIGHT, MINBRIGHT, MAXBRIGHT);
-    setLed(0, 0, 1, MINBRIGHT, MAXBRIGHT, MINBRIGHT);
-    delay(500);
-    setLed(0, 0, 0, MAXBRIGHT, MAXBRIGHT, MAXBRIGHT);
-    setLed(0, 0, 1, MAXBRIGHT, MAXBRIGHT, MAXBRIGHT);
-    delay(1000);
-    setLed(0, 0, 0, MINBRIGHT, MINBRIGHT, MINBRIGHT);
-    setLed(0, 0, 1, MINBRIGHT, MINBRIGHT, MINBRIGHT);
+    for (int i=0;i<LED_COLUMNS;i++){
+      //setLed(0, i, 0, MAXBRIGHT, MINBRIGHT, MINBRIGHT);
+      setLed(0, i, 1, MAXBRIGHT, MINBRIGHT, MINBRIGHT);
+    }
+
     delay(1000);
 
-    fadingTest();
+    for (int i=0;i<LED_COLUMNS;i++){
+      setLed(0, i, 0, MINBRIGHT, MAXBRIGHT, MINBRIGHT);
+      //setLed(0, i, 1, MINBRIGHT, MAXBRIGHT, MINBRIGHT);
+    }
+
+    delay(1000);
+
+    for (int i=0;i<LED_COLUMNS;i++){
+      setLed(0, i, 0, MINBRIGHT, MINBRIGHT, MAXBRIGHT);
+      setLed(0, i, 1, MINBRIGHT, MINBRIGHT, MAXBRIGHT);
+    }
+
+    delay(1000);
+
+    for (int i=0;i<LED_COLUMNS;i++){
+      setLed(0, i, 0, MAXBRIGHT, MAXBRIGHT, MAXBRIGHT);
+      setLed(0, i, 1, MAXBRIGHT, MAXBRIGHT, MAXBRIGHT);
+    }
+    delay(1000);
+
+    for (int i=0; i<LED_COLUMNS; i++) {
+      setLed(0, i, 0, MINBRIGHT, MINBRIGHT, MINBRIGHT);
+      setLed(0, i, 1, MINBRIGHT, MINBRIGHT, MINBRIGHT);
+    }
+
+    delay(1000);
+
+    //fadingTest();
 }
 
 void fadingTest(){
   // fade in
   for (int i = 0; i < 12; i++) {
-    setLed(0, 0, 0, i, i, 0);
-    setLed(0, 0, 1, 0, i, i / 2);
+    for (int j=0; j < LED_COLUMNS;j++) {
+      setLed(0, j, 0, i, i, 0);
+      setLed(0, j, 1, 0, i, i / 2);
+    }
     delay(120);
   }
 
@@ -137,12 +157,14 @@ void fadingTest(){
 
   // fade bottom one from red to blue
   for (int i = 0; i < 12; i++) {
-    setLed(0, 0, 0, 12 - i, 12, i);
+    for (int j=0; j < LED_COLUMNS;j++) {
+      setLed(0, j, 0, 12 - i, 12, i);
+    }
     delay(120);
   }
 
   delay(1000);
-
+/*
   // fade color from upper green to lower red
   for (int i = 0; i < 12; i++) {
     setLed(0, 0, 0, 0, 12 - i, 12);
@@ -151,17 +173,21 @@ void fadingTest(){
   }
 
   delay(1000);
-
+*/
   // fade all out, and see if it crashes
   for (int i = 0; i < 12; i++) {
-    setLed(0, 0, 0, 0, 0, 12 - i);
-    setLed(0, 0, 1, 12 - i, 12 - i, 6 - (i / 2));
+    for (int j=0;j<LED_COLUMNS;j++){
+      setLed(0, j, 0, 0, 0, 12 - i);
+      setLed(0, j, 1, 12 - i, 12 - i, 6 - (i / 2));
+    }
     delay(120);
   }
 
   // set off
-  setLed(0, 0, 0, 0, 0, 0);
-  setLed(0, 0, 1, 0, 0, 0);
+  for(int i=0;i<LED_COLUMNS;i++){
+    setLed(0, i, 0, 0, 0, 0);
+    setLed(0, i, 1, 0, 0, 0);
+  }
   delay(1000);
 }
 
@@ -241,16 +267,17 @@ ISR(TIMER1_COMPA_vect) {
 
   // there is maybe an offset of unused ports on the shift registers; this depends on the cubes size
   int shift = (((LED_COLUMNS * 3 * LED_ROWS) + LED_LAYERS) % 8) - 1;
-
-// Serial.print("tick: ");
-// Serial.println(currentTick);
+  // correct modulo 8 is 0
+  shift = shift == -1 ? 7 : shift;
 
   // The idea is to shift out the led information from back to front from the perspective of the
   // daisy chained shift registers. Shift out only the current layer for the current tick given by
   // the BAM duty cycle. The rest is done by Arduino by repetetive calls of this method.
   for (int j = (LED_ROWS - 1); j >= 0; j--) {
     for (int k = ((LED_COLUMNS * 3) - 1); k >= 0; k--) {
-      transferByte = transferByte | (ledCubeBitMask[bamPos(currentTick)][j][k][currentLayer] << shift--);
+      transferByte = transferByte | (ledCubeBitMask[bamPos(currentTick)][j][k][currentLayer] << shift);
+      shift--;
+
       if (shift < 0) {
         // shift out the byte
         SPI.transfer(transferByte);
@@ -275,9 +302,6 @@ ISR(TIMER1_COMPA_vect) {
     // }
 
     if (shift < 0) {
-      // Serial.print("transfer: ");
-      // Serial.println(transferByte, BIN);
-
       //shift out the byte
       SPI.transfer(transferByte);
 
@@ -293,8 +317,6 @@ ISR(TIMER1_COMPA_vect) {
   PORTD |= 1 << latchPin;
   PORTD &= ~(1 << latchPin);
   PORTD &= ~(1 << blankPin);
-
-  //Serial.println("latch impuls");
 
   // reset current layer to the first one, when all layers have been shifted out
   currentLayer = ((currentLayer < LED_LAYERS - 1) ? (currentLayer + 1) : 0);
