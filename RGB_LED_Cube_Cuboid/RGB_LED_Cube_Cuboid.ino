@@ -10,16 +10,14 @@
  */
 
 // must be 13 defined by SPI
-const uint8_t clockPin = 13;
+#define CLOCK_PIN 13
 // must be 11 defined by SPI
-const uint8_t dataPin = 11;
+#define DATA_PIN 11
+#define LATCH_PIN 2
+#define BLANK_PIN 4
 
-const uint8_t latchPin = 2;
-// @todo: Find out for whatever reason Kevin has used this blank pin
-const uint8_t blankPin = 4;
-
-// The driver logic is based on rows and columns from the top view onto the cube. 
-// LEDs theoretical numbering on a layer is from back left to front right (columns 
+// The driver logic is based on rows and columns from the top view onto the cube.
+// LEDs theoretical numbering on a layer is from back left to front right (columns
 // from left to right; rows from back to front; layers from bottom to top).
 //
 // 2x2x2     4x4x4           ...
@@ -35,118 +33,298 @@ const uint8_t blankPin = 4;
 // 0 is the anode for the bottom layer.
 
 // Size definition of the cube or cuboid
-const uint8_t LED_ROWS = 1;
-const uint8_t LED_COLUMNS = 4;
-const uint8_t LED_LAYERS = 4;
+#define LED_ROWS 1
+#define LED_COLUMNS 4
+#define LED_LAYERS 4
 
 // 4 bit - bit angle modulation (BAM)
-const uint8_t BAM = 4;
+#define BAM 4
 
 // maximum and minimum brightness for LEDs
-const uint8_t MAXBRIGHT = 15;
-const uint8_t MINBRIGHT = 0;
+#define MAXBRIGHT 15
+#define MINBRIGHT 0
 
-// bit mask for the led state information (LED_COLUMS * 3, because each LED has three
-// cathode pins).
+/**
+ * Direction flags for the base directions.
+ */
+enum Direction {
+  Zero = 0 << 0,
+  Front = 1 << 0,
+  Left = 1 << 1,
+  Up = 1 << 2,
+  Back = 1 << 3,
+  Right = 1 << 4,
+  Down = 1 << 5
+};
+
+/**
+ * Structure for a 3D vector that indicates a point or a movement direction in 
+ * the cubes or cuboid space. 
+ */
+typedef struct {
+  int x;
+  int y;
+  int z;
+} Vector3D;
+
+// bit mask for the led state information (LED_COLUMS * 3, because each LED has 
+// three cathode pins).
 bool ledCubeBitMask[BAM][LED_ROWS][LED_COLUMNS * 3][LED_LAYERS];
 
 // This variables are used to shift out data to the shift registers
 uint8_t currentTick = 0;
 uint8_t currentLayer = 0;
 
-void setup() {
 
-  //SPI.begin();
+void setup() {
+  // disable interrupts
+  cli();
+
+  SPI.begin();
+
   SPI.setBitOrder(MSBFIRST);  // most significant bit first vs. least significant bit first
   // Set LSB as bit order, this means we will send the least significant bit first and it
   // will be written to Q7 = Register Pin 7 with the most significant bit being written last
   // to Q0 or Pin 15
-  
+
   SPI.setDataMode(SPI_MODE0);
   SPI.setClockDivider(SPI_CLOCK_DIV2);
 
-  // disable interrupts
-  //cli();
-  noInterrupts();
-
   // initialize the timer interrupts to enable multiplexing
 
-  // set TCCR1A register 
+  // set TCCR1A register
   TCCR1A = B00000000;
-  // set TCCR1B register 
+  // set TCCR1B register
   TCCR1B = B00001011;
 
   // triggers the time of the interrupt
   // an interval faster than 70 seems to mix the colors between layers
-  OCR1A = 40;
+  OCR1A = 70;
 
   TIMSK1 = B00000010;
 
   // Configure the Arduino pins used as OUTPUT, so they can send data to the Shift Register
-  pinMode(latchPin, OUTPUT);
-  pinMode(clockPin, OUTPUT);
-  pinMode(dataPin, OUTPUT);
-  pinMode(blankPin, OUTPUT);
+  pinMode(LATCH_PIN, OUTPUT);
+  pinMode(CLOCK_PIN, OUTPUT);
+  pinMode(DATA_PIN, OUTPUT);
+  pinMode(BLANK_PIN, OUTPUT);
 
-  SPI.begin();
-  
   // clear all leds
   clearLeds();
 
   // allow interrupts
-  //sei();
-  interrupts();
+  sei();
 
   // start serial connection - for debugging reasons
-  // Serial.begin(9600);
+  Serial.begin(9600);
 }
+uint8_t currentCorner = 0;
 
 /**
 * Within the loop only the bytes should be manipulated that are written out in ISR method
 */
 void loop() {
-    // functional check
-    for (int i=0;i<LED_COLUMNS;i++){
-      //setLed(0, i, 0, MAXBRIGHT, MINBRIGHT, MINBRIGHT);
-      setLed(0, i, 1, MAXBRIGHT, MINBRIGHT, MINBRIGHT);
-    }
+  Vector3D corner, dir;
+  setDirection(&dir, random()%64);
+  setCornerCoordinates(&corner, &dir);
 
-    delay(1000);
+  while(isZeroVector(&dir) || !canMove(&corner, &dir)){
+    setDirection(&dir, random()%64);
+  }
+  drawLine(&corner, &dir);
 
-    for (int i=0;i<LED_COLUMNS;i++){
-      setLed(0, i, 0, MINBRIGHT, MAXBRIGHT, MINBRIGHT);
-      //setLed(0, i, 1, MINBRIGHT, MAXBRIGHT, MINBRIGHT);
-    }
-
-    delay(1000);
-
-    for (int i=0;i<LED_COLUMNS;i++){
-      setLed(0, i, 0, MINBRIGHT, MINBRIGHT, MAXBRIGHT);
-      setLed(0, i, 1, MINBRIGHT, MINBRIGHT, MAXBRIGHT);
-    }
-
-    delay(1000);
-
-    for (int i=0;i<LED_COLUMNS;i++){
-      setLed(0, i, 0, MAXBRIGHT, MAXBRIGHT, MAXBRIGHT);
-      setLed(0, i, 1, MAXBRIGHT, MAXBRIGHT, MAXBRIGHT);
-    }
-    delay(1000);
-
-    for (int i=0; i<LED_COLUMNS; i++) {
-      setLed(0, i, 0, MINBRIGHT, MINBRIGHT, MINBRIGHT);
-      setLed(0, i, 1, MINBRIGHT, MINBRIGHT, MINBRIGHT);
-    }
-
-    delay(1000);
-
-    //fadingTest();
+  // snake(30000, millis(), 80);
+  delay(200);
+  clearLeds();
 }
 
-void fadingTest(){
+/**
+ *
+ */
+void printVector3D(String name, Vector3D * vec) {
+  Serial.print(name);
+  Serial.print("(");
+  Serial.print(vec->x);
+  Serial.print(",");
+  Serial.print(vec->y);
+  Serial.print(",");
+  Serial.print(vec->z);
+  Serial.println(")");
+}
+
+/**
+ * Sets the coordinates of a corner of the cube to the vector.
+ *
+ * @param vector The vector that should represent the corner.
+ * @param direction The direction vector that points to the corner.   
+ */
+void setCornerCoordinates(Vector3D * vector, const Vector3D * direction) {
+    vector -> x = direction -> x <= 0 ? 0 : LED_ROWS-1;
+    vector -> y = direction -> y <= 0 ? 0 : LED_COLUMNS-1;
+    vector -> z = direction -> z <= 0 ? 0 : LED_LAYERS-1;
+}
+
+/**
+ * Set direction coordinates to a vector. Can be used to set a direction by 
+ * using the Direction enum (e.g. Left|Up, Right, Down|Back, Right|Up|Front).
+ *
+ * @param vector - the vector to set the coordinates
+ * @param direction - the direction to set
+ */
+void setDirection(Vector3D * vector, Direction direction) {
+  setDirection(vector, (uint8_t)direction);
+}
+
+/**
+ * Set the direction coordinates to a vector. Could be used to get a random 
+ * direction. 
+ * 
+ * @param vector - the vector to set the coordinates
+ * @param direction - unless there are 6 base directions the max value is
+ *    maximum value of 6 bits (63)  
+ */
+void setDirection(Vector3D * vector, uint8_t direction) {
+  direction = constrain(direction, 0, 63);
+
+  // zero vector - no direction
+  vector -> x = 0;
+  vector -> y = 0;
+  vector -> z = 0;
+
+  // set directions to vector 
+  for (uint8_t i = 0; i < 6; i++) {
+    switch (direction & (1 << i)) {
+      case Front:
+      vector -> x += 1; 
+      break;
+      case Left:
+      vector -> y += 1;
+      break;
+      case Up:
+      vector -> z += 1;
+      break;
+      case Back:
+      vector -> x -= 1; 
+      break;
+      case Right:
+      vector -> y -= 1;
+      break;
+      case Down:
+      vector -> z -= 1;
+      break;
+    }
+  }
+}
+
+/**
+ * 
+ */
+void inverse(Vector3D * vector) {
+  vector->x = vector->x * (-1);
+  vector->y = vector->y * (-1);
+  vector->z = vector->z * (-1);
+} 
+
+/**
+ * Draw a line from a point in the cube into the directon given by a direction 
+ * vecor.
+ *
+ * @param point - the initial point (LED) in the cube
+ * @param direction - the direction to draw through
+ */
+void drawLine(Vector3D * point, const Vector3D * direction) {
+  while (canMove(point, direction)) {
+    setLed(point->x, point->y, point->z, MAXBRIGHT, MAXBRIGHT, MAXBRIGHT);
+    point->x += direction->x;
+    point->y += direction->y;
+    point->z += direction->z;
+    delay(60);
+  }
+  setLed(point->x, point->y, point->z, MAXBRIGHT, MAXBRIGHT, MAXBRIGHT);
+}
+
+bool canMove(const Vector3D * point, const Vector3D * direction) {
+  if(point->x + direction->x < 0 || point->x + direction->x > LED_ROWS-1) {
+    return false;
+  }
+  if(point->y + direction->y < 0 || point->y + direction->y > LED_COLUMNS-1) {
+    return false;
+  }
+  if(point->z + direction->z < 0 || point->z + direction->z > LED_LAYERS-1) {
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Indicats whether the given vector is the zero vector (0,0,0).
+ */
+bool isZeroVector(const Vector3D * vec) {
+  return vec->x == 0 && vec->y == 0 && vec->z == 0; 
+}
+
+/**
+ * Snake animation
+void snake(unsigned long runTimeInMillis, unsigned long startTimeInMillis, unsigned long speedInMillis) {
+  int x = random() % LED_ROWS;
+  int y = random() % LED_COLUMNS;
+  int z = random() % LED_LAYERS;
+  int lx, ly, lz = -1;
+
+  int lastDir = 0;
+  int dirCtr = 0;
+
+  while ((millis() - startTimeInMillis) < runTimeInMillis) {
+    clearLeds();
+
+    // get direction
+    int direction = random() % 6;
+
+    //dont't go directly back and igonore other rows
+    while (lastDir + 3 == direction || direction == FRONT || direction == BACK) {
+      direction = random() % 6;
+    }
+
+    // count steps to same direction
+    if (lastDir == direction) {
+      dirCtr++;
+    }
+
+    // don't go more than 3 steps into the same direction
+    if (dirCtr == 3) {
+      //dont't go directly back and cand igonore other rows
+      while (lastDir + 3 == direction || lastDir == direction || direction == FRONT || direction == BACK) {
+        direction = random() % 6;
+      }
+      dirCtr = 0;
+    }
+    lastDir = direction;
+
+    if (lx >= 0) {
+      setLed(lx, ly, lz, 1, 1, MINBRIGHT);
+    }
+    lx = x;
+    ly = y;
+    lz = z;
+
+    setLed(x, y, z, 2, 2, MINBRIGHT);
+
+    // mem direction
+    x = constrain(x + DIRECTION_VECTOR[direction][0], 0, LED_ROWS - 1);
+    y = constrain(y + DIRECTION_VECTOR[direction][1], 0, LED_COLUMNS - 1);
+    z = constrain(z + DIRECTION_VECTOR[direction][2], 0, LED_LAYERS - 1);
+
+    // new LED on
+    setLed(x, y, z, MAXBRIGHT, MAXBRIGHT, MINBRIGHT);
+    delay(speedInMillis);
+  }
+}
+*/
+
+void fadingTest() {
   // fade in
   for (int i = 0; i < 12; i++) {
-    for (int j=0; j < LED_COLUMNS;j++) {
+    for (int j = 0; j < LED_COLUMNS; j++) {
       setLed(0, j, 0, i, i, 0);
       setLed(0, j, 1, 0, i, i / 2);
     }
@@ -157,14 +335,14 @@ void fadingTest(){
 
   // fade bottom one from red to blue
   for (int i = 0; i < 12; i++) {
-    for (int j=0; j < LED_COLUMNS;j++) {
+    for (int j = 0; j < LED_COLUMNS; j++) {
       setLed(0, j, 0, 12 - i, 12, i);
     }
     delay(120);
   }
 
   delay(1000);
-/*
+  /*
   // fade color from upper green to lower red
   for (int i = 0; i < 12; i++) {
     setLed(0, 0, 0, 0, 12 - i, 12);
@@ -176,7 +354,7 @@ void fadingTest(){
 */
   // fade all out, and see if it crashes
   for (int i = 0; i < 12; i++) {
-    for (int j=0;j<LED_COLUMNS;j++){
+    for (int j = 0; j < LED_COLUMNS; j++) {
       setLed(0, j, 0, 0, 0, 12 - i);
       setLed(0, j, 1, 12 - i, 12 - i, 6 - (i / 2));
     }
@@ -184,12 +362,16 @@ void fadingTest(){
   }
 
   // set off
-  for(int i=0;i<LED_COLUMNS;i++){
+  for (int i = 0; i < LED_COLUMNS; i++) {
     setLed(0, i, 0, 0, 0, 0);
     setLed(0, i, 1, 0, 0, 0);
   }
   delay(1000);
 }
+
+// #########################
+// the driver specific stuff
+// #########################
 
 /**
  * Set all LEDs on all brightness levels to zero to turn them off.
@@ -223,12 +405,6 @@ void setLed(uint8_t row, uint8_t column, uint8_t layer, uint8_t red, uint8_t gre
   setLedColorBrightness(row, ((column * 3) + 1), layer, green);
   setLedColorBrightness(row, ((column * 3) + 2), layer, blue);
 }
-
-/* 
- * #########################
- * the driver specific stuff
- * #########################
- */
 
 /**
  * Map the color brightness to the 4-bit BAM bit mask of the LED.
@@ -289,8 +465,8 @@ ISR(TIMER1_COMPA_vect) {
     }
   }
 
-  // Shift out the layer anodes, the logic bases on the idea that the anodes are at the 
-  // beginning of the daisy chained shift registers and that the bottem layer is 
+  // Shift out the layer anodes, the logic bases on the idea that the anodes are at the
+  // beginning of the daisy chained shift registers and that the bottem layer is
   // connected in first position (MSBFIRST)
   for (int i = LED_LAYERS - 1; i >= 0; i--) {
     if (i == currentLayer) {
@@ -312,15 +488,15 @@ ISR(TIMER1_COMPA_vect) {
   }
 
   // set latch low than high to activate shift registers
-  // PORTD &= 0 << latchPin;
-  // PORTD |= 1 << latchPin;
-  PORTD |= 1 << latchPin;
-  PORTD &= ~(1 << latchPin);
-  PORTD &= ~(1 << blankPin);
+  // PORTD &= 0 << LATCH_PIN;
+  // PORTD |= 1 << LATCH_PIN;
+  PORTD |= 1 << LATCH_PIN;
+  PORTD &= ~(1 << LATCH_PIN);
+  PORTD &= ~(1 << BLANK_PIN);
 
   // reset current layer to the first one, when all layers have been shifted out
   currentLayer = ((currentLayer < LED_LAYERS - 1) ? (currentLayer + 1) : 0);
-  
+
   // when all layers for this tick were shifted out repeat for next tick
   if (currentLayer == 0) {
     // prepare for next tick or restart for next duty cycle
@@ -351,3 +527,4 @@ uint8_t maxValue(uint8_t bits) {
   }
   return bitValue;
 }
+
