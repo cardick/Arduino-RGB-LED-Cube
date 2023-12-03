@@ -1,15 +1,20 @@
-/*
-	LinkedList.h - V1.1 - Generic LinkedList implementation
-	Works better with FIFO, because LIFO will need to
-	search the entire List to find the last one;
-
-	For instructions, go to https://github.com/ivanseidel/LinkedList
-
-	Created by Ivan Seidel Gomes, March, 2013.
-	Released into the public domain.
-*/
-
-
+/**
+ *	LinkedList.h - V1.1 - Generic LinkedList implementation
+ *	Works better with FIFO, because LIFO will need to
+ *	search the entire List to find the last one;
+ *
+ *	For instructions, go to https://github.com/ivanseidel/LinkedList
+ *
+ *	Created by Ivan Seidel Gomes, March, 2013.
+ *	Released into the public domain.
+ *
+ *	Modified by Carsten Dick to support double linked list, so LIFO is as fast 
+ *	as FIFO. Only some functions adjusted: 
+ *		add(T), add(int, T), get(int) and getNode(int)
+ *
+ *	So take care, because the other functions may not work correctly. In this 
+ *	project the list is only needed to initialize a fix list of LEDs.
+ */
 #ifndef LinkedList_h
 #define LinkedList_h
 
@@ -20,6 +25,7 @@ struct ListNode
 {
 	T data;
 	ListNode<T> *next;
+	ListNode<T> *prev;
 };
 
 template <typename T>
@@ -154,10 +160,21 @@ ListNode<T>* LinkedList<T>::getNode(int index){
 		current = lastNodeGot;
 	}
 
-	while(_pos < index && current){
-		current = current->next;
-
-		_pos++;
+	// devide and conquer
+	if(_size/2 < index) {
+		// Serial.println("search by next");
+		while(_pos < index && current){
+			current = current->next;
+			_pos++;
+		}
+	} else {
+		// Serial.println("search by prev");
+		_pos = _size - 1;
+		current = last;
+		while(_pos > index && current) {
+			current = current->prev;
+			_pos--;
+		}
 	}
 
 	// Check if the object index got is the same as the required
@@ -194,10 +211,14 @@ bool LinkedList<T>::add(int index, T _t){
 		return unshift(_t);
 
 	ListNode<T> *tmp = new ListNode<T>(),
-				 *_prev = getNode(index-1);
+				 *_prev = getNode(index-1),
+				 *_next = getNode(index);
+
 	tmp->data = _t;
 	tmp->next = _prev->next;
+	tmp->prev = _prev;
 	_prev->next = tmp;
+	_next->prev = tmp;
 
 	_size++;
 	isCached = false;
@@ -211,10 +232,12 @@ bool LinkedList<T>::add(T _t){
 	ListNode<T> *tmp = new ListNode<T>();
 	tmp->data = _t;
 	tmp->next = NULL;
+	tmp->prev = NULL;
 	
 	if(root){
 		// Already have elements inserted
 		last->next = tmp;
+		tmp->prev = last;
 		last = tmp;
 	}else{
 		// First element being inserted

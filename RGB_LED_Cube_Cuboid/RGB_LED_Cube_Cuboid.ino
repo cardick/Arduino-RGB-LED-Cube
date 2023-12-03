@@ -1,6 +1,3 @@
-#include <SPI.h>
-#include "LedCube.h"
-
 /**
  * Controll a common anode RGB LED cube or cuboid - inspired by the projects of 
  * Kevin Darrah and Tiemen Waterreus. 
@@ -10,6 +7,10 @@
  * @see SPI Tutorial: https://core-electronics.com.au/guides/spi-arduino-tutorial/ 
  * @author Carsten Dick (carsten.dick@googlemail.com)
  */
+
+#include <SPI.h>
+#include "LedCube.h"
+
 
 // must be 13 defined by SPI
 #define CLOCK_PIN 13
@@ -108,8 +109,8 @@ void setup() {
   Serial.begin(9600);
 
   // lookup cube
-  Cube.print();
-  Cube.printJsonLeds();
+  // Cube.print();
+  // Cube.printJsonLeds();
 }
 
 uint8_t currentCorner = 0;
@@ -118,23 +119,57 @@ uint8_t currentCorner = 0;
 * Within the loop only the bytes should be manipulated that are written out in ISR method
 */
 void loop() {
-  Point3D corner;
-  Vector3D dir;
+  // Point3D corner;
+  // Vector3D dir;
 
-  Vector.setDirection(&dir, random()%64);
-  Cube.setCorner(&corner, &dir);
-  Vector.print("origin", &corner);
+  // Vector.setDirection(&dir, random()%64);
+  // Cube.setCorner(&corner, &dir);
+  // // Vector.print("origin", &corner);
 
-  // get direction to move
-  while(Vector.isZeroVector(&dir) || !canMove(&corner, &dir)) {
-    Vector.setDirection(&dir, random()%64);
-  }
-  Vector.print("dir", &dir);
+  // // get direction to move
+  // while(Vector.isZeroVector(&dir) || !canMove(&corner, &dir)) {
+  //   Vector.setDirection(&dir, random()%64);
+  // }
+  // // Vector.print("dir", &dir);
   
-  drawLine(&corner, &dir);
+  // drawLine(&corner, &dir);
 
-  Vector.print("start point", &corner);
+  LED * led_1 = Cube.get(2);
+  led_1->color->red = Brightness::Low;
+  led_1->color->green = Brightness::Off;
+  led_1->color->blue = Brightness::Off;
+  LED * led_2 = Cube.get(7);
+  led_2->color->red = Brightness::Off;
+  led_2->color->green = Brightness::Medium;
+  led_2->color->blue = Brightness::Low;
+  LED * led_3 = Cube.get(10);
+  led_3->color->red = Brightness::Off;
+  led_3->color->green = Brightness::High;
+  led_3->color->blue = Brightness::Off;
+  LED * led_4 = Cube.get(12);
+  led_4->color->red = Brightness::Full;
+  led_4->color->green = Brightness::Full;
+  led_4->color->blue = Brightness::Off;
 
+  // Vector.print("start point", &corner);
+
+  // Cube.allOn(Brightness::Full);
+  // Cube.printJsonLeds();
+  // delay(100);
+
+  // Cube.allOff();
+  // Cube.printJsonLeds();
+
+  // LED * toFind = Cube.get(7);
+  // delay(20);
+  // Cube.printLed(toFind);
+  // delay(40);
+  
+  // toFind = Cube.get(10);
+  // delay(20);
+  // Cube.printLed(toFind);
+
+  
   // ######### start moving the line, holding the angle on the origin corner
 
   // get neighbouring corners
@@ -428,56 +463,8 @@ void setLedColorBrightness(uint8_t row, uint8_t columnColorPin, uint8_t layer, u
  */
 ISR(TIMER1_COMPA_vect) {
 
-  // SPI.transfer is using byte, so we have to shift out the LED cubes BAM bitmask byte wise
-  // SPI.beginTransaction(settings);
-  uint8_t transferByte = 0b00000000;
-
-  // there is maybe an offset of unused ports on the shift registers; this depends on the cubes size
-  int shift = (((LED_COLUMNS * 3 * LED_ROWS) + LED_LAYERS) % 8) - 1;
-  // correct modulo 8 is 0
-  shift = shift == -1 ? 7 : shift;
-
-  // The idea is to shift out the led information from back to front from the perspective of the
-  // daisy chained shift registers. Shift out only the current layer for the current tick given by
-  // the BAM duty cycle. The rest is done by Arduino by repetetive calls of this method.
-  for (int j = (LED_ROWS - 1); j >= 0; j--) {
-    for (int k = ((LED_COLUMNS * 3) - 1); k >= 0; k--) {
-      transferByte = transferByte | (ledCubeBitMask[bamPos(currentTick)][j][k][currentLayer] << shift);
-      shift--;
-
-      if (shift < 0) {
-        // shift out the byte
-        SPI.transfer(transferByte);
-
-        // reset transfer byte and shift
-        transferByte = 0b00000000;
-        shift = 7;
-      }
-    }
-  }
-
-  // Shift out the layer anodes, the logic bases on the idea that the anodes are at the
-  // beginning of the daisy chained shift registers and that the bottem layer is
-  // connected in first position (MSBFIRST)
-  for (int i = LED_LAYERS - 1; i >= 0; i--) {
-    if (i == currentLayer) {
-      transferByte = transferByte | (1 << shift);
-    }
-    shift--;
-    // else {
-    //   transferByte = transferByte | (0 << shift--);
-    // }
-
-    if (shift < 0) {
-      //shift out the byte
-      SPI.transfer(transferByte);
-
-      //reset transfer byte and shift
-      transferByte = 0b00000000;
-      shift = 7;
-    }
-    // SPI.endTransaction();
-  }
+  // shift current layer for current BAM tick to the shift registers
+  Cube.shiftLayerForTick(currentLayer, currentTick);
 
   // set latch low than high to activate shift registers
   PORTD |= 1 << LATCH_PIN;
@@ -485,12 +472,12 @@ ISR(TIMER1_COMPA_vect) {
   PORTD &= ~(1 << BLANK_PIN);
 
   // reset current layer to the first one, when all layers have been shifted out
-  currentLayer = ((currentLayer < LED_LAYERS - 1) ? (currentLayer + 1) : 0);
+  currentLayer = ((currentLayer < Cube.getLayerSize() - 1) ? (currentLayer + 1) : 0);
 
   // when all layers for this tick were shifted out repeat for next tick
   if (currentLayer == 0) {
     // prepare for next tick or restart for next duty cycle
-    currentTick = currentTick < maxValue(BAM) ? (currentTick + 1) : 0;
+    currentTick = currentTick < Brightness::Full ? (currentTick + 1) : 0;
   }
 }
 
