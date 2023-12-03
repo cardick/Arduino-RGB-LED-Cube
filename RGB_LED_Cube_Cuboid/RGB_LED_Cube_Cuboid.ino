@@ -1,4 +1,6 @@
 #include <SPI.h>
+#include "LedCube.h"
+
 /**
  * Controll a common anode RGB LED cube or cuboid - inspired by the projects of 
  * Kevin Darrah and Tiemen Waterreus. 
@@ -44,43 +46,28 @@
 #define MAXBRIGHT 15
 #define MINBRIGHT 0
 
-/**
- * Direction flags for the base directions.
- */
-enum Direction {
-  Zero = 0 << 0,
-  Front = 1 << 0,
-  Left = 1 << 1,
-  Up = 1 << 2,
-  Back = 1 << 3,
-  Right = 1 << 4,
-  Down = 1 << 5
-};
-
-/**
- * Structure for a 3D vector that indicates a point or a movement direction in 
- * the cubes or cuboid space. 
- */
-typedef struct {
-  int x;
-  int y;
-  int z;
-} Vector3D;
+// const SPISettings settings = SPISettings(SPI_CLOCK_DIV2, MSBFIRST, SPI_MODE0);
 
 // bit mask for the led state information (LED_COLUMS * 3, because each LED has 
 // three cathode pins).
 bool ledCubeBitMask[BAM][LED_ROWS][LED_COLUMNS * 3][LED_LAYERS];
 
+LED leds[LED_ROWS * LED_COLUMNS * LED_LAYERS];
+
 // This variables are used to shift out data to the shift registers
 uint8_t currentTick = 0;
 uint8_t currentLayer = 0;
-
 
 void setup() {
   // disable interrupts
   cli();
 
+  // initialize the cube
+  Cube.init(LED_ROWS, LED_COLUMNS, LED_LAYERS);
+
+  // initialize SPI
   SPI.begin();
+  // SPI.beginTransaction(settings);
 
   SPI.setBitOrder(MSBFIRST);  // most significant bit first vs. least significant bit first
   // Set LSB as bit order, this means we will send the least significant bit first and it
@@ -102,12 +89,14 @@ void setup() {
   OCR1A = 70;
 
   TIMSK1 = B00000010;
-
+  
   // Configure the Arduino pins used as OUTPUT, so they can send data to the Shift Register
   pinMode(LATCH_PIN, OUTPUT);
   pinMode(CLOCK_PIN, OUTPUT);
   pinMode(DATA_PIN, OUTPUT);
   pinMode(BLANK_PIN, OUTPUT);
+
+  // SPI.endTransaction();
 
   // clear all leds
   clearLeds();
@@ -117,122 +106,85 @@ void setup() {
 
   // start serial connection - for debugging reasons
   Serial.begin(9600);
+
+  // lookup cube
+  Cube.print();
+  Cube.printJsonLeds();
 }
+
 uint8_t currentCorner = 0;
 
 /**
 * Within the loop only the bytes should be manipulated that are written out in ISR method
 */
 void loop() {
-  Vector3D corner, dir;
-  setDirection(&dir, random()%64);
-  setCornerCoordinates(&corner, &dir);
+  Point3D corner;
+  Vector3D dir;
 
-  while(isZeroVector(&dir) || !canMove(&corner, &dir)){
-    setDirection(&dir, random()%64);
+  Vector.setDirection(&dir, random()%64);
+  Cube.setCorner(&corner, &dir);
+  Vector.print("origin", &corner);
+
+  // get direction to move
+  while(Vector.isZeroVector(&dir) || !canMove(&corner, &dir)) {
+    Vector.setDirection(&dir, random()%64);
   }
+  Vector.print("dir", &dir);
+  
   drawLine(&corner, &dir);
+
+  Vector.print("start point", &corner);
+
+  // ######### start moving the line, holding the angle on the origin corner
+
+  // get neighbouring corners
+  // Vector.inverse(&dir);
+  
+  // // get the possible movements from this corner
+  // Direction possibleDirections = getDirections(&corner);
+  // Vector3D directionVectors[getSize(possibleDirections)];
+
+  // for (int i=0, j=0; i<6; i++) {
+  //   if(0 < possibleDirections & (1 << i)) {
+  //     // these directions also includes the opposite direction of the origin
+  //     Vector.setDirection(&directionVectors[j++], (1 << i));
+  //   }
+  // }
+
+  // // determine in which direction we want to move the line
+  // int index;
+  // do {
+  //   index = random() % sizeof(directionVectors);
+  // } while(Vector.equals(&dir, &directionVectors[index]));
+
+  // Vector.print("target dir", &directionVectors[index]);
+
+  // get the corner in target direction
+
+  // evaluate if it is a neighbour; determine the direct neighbour if not
+
+  // move the line to the target corner via the the direct neighbouring corner 
+  // by holding the angle on the origin corner 
+
+  // ########### repeat moving the line via angle while angle and origin as start point change
 
   // snake(30000, millis(), 80);
   delay(200);
   clearLeds();
 }
 
-/**
- *
- */
-void printVector3D(String name, Vector3D * vec) {
-  Serial.print(name);
-  Serial.print("(");
-  Serial.print(vec->x);
-  Serial.print(",");
-  Serial.print(vec->y);
-  Serial.print(",");
-  Serial.print(vec->z);
-  Serial.println(")");
-}
-
-/**
- * Sets the coordinates of a corner of the cube to the vector.
- *
- * @param vector The vector that should represent the corner.
- * @param direction The direction vector that points to the corner.   
- */
-void setCornerCoordinates(Vector3D * vector, const Vector3D * direction) {
-    vector -> x = direction -> x <= 0 ? 0 : LED_ROWS-1;
-    vector -> y = direction -> y <= 0 ? 0 : LED_COLUMNS-1;
-    vector -> z = direction -> z <= 0 ? 0 : LED_LAYERS-1;
-}
-
-/**
- * Set direction coordinates to a vector. Can be used to set a direction by 
- * using the Direction enum (e.g. Left|Up, Right, Down|Back, Right|Up|Front).
- *
- * @param vector - the vector to set the coordinates
- * @param direction - the direction to set
- */
-void setDirection(Vector3D * vector, Direction direction) {
-  setDirection(vector, (uint8_t)direction);
-}
-
-/**
- * Set the direction coordinates to a vector. Could be used to get a random 
- * direction. 
- * 
- * @param vector - the vector to set the coordinates
- * @param direction - unless there are 6 base directions the max value is
- *    maximum value of 6 bits (63)  
- */
-void setDirection(Vector3D * vector, uint8_t direction) {
-  direction = constrain(direction, 0, 63);
-
-  // zero vector - no direction
-  vector -> x = 0;
-  vector -> y = 0;
-  vector -> z = 0;
-
-  // set directions to vector 
-  for (uint8_t i = 0; i < 6; i++) {
-    switch (direction & (1 << i)) {
-      case Front:
-      vector -> x += 1; 
-      break;
-      case Left:
-      vector -> y += 1;
-      break;
-      case Up:
-      vector -> z += 1;
-      break;
-      case Back:
-      vector -> x -= 1; 
-      break;
-      case Right:
-      vector -> y -= 1;
-      break;
-      case Down:
-      vector -> z -= 1;
-      break;
-    }
-  }
-}
-
-/**
- * 
- */
-void inverse(Vector3D * vector) {
-  vector->x = vector->x * (-1);
-  vector->y = vector->y * (-1);
-  vector->z = vector->z * (-1);
-} 
+// *****************************************************
+// Methods to compute drawing in three dimensional space
+// *****************************************************
 
 /**
  * Draw a line from a point in the cube into the directon given by a direction 
- * vecor.
+ * vector.
  *
  * @param point - the initial point (LED) in the cube
  * @param direction - the direction to draw through
  */
-void drawLine(Vector3D * point, const Vector3D * direction) {
+void drawLine(Point3D * point, const Vector3D * direction) {
   while (canMove(point, direction)) {
     setLed(point->x, point->y, point->z, MAXBRIGHT, MAXBRIGHT, MAXBRIGHT);
     point->x += direction->x;
@@ -243,7 +195,52 @@ void drawLine(Vector3D * point, const Vector3D * direction) {
   setLed(point->x, point->y, point->z, MAXBRIGHT, MAXBRIGHT, MAXBRIGHT);
 }
 
-bool canMove(const Vector3D * point, const Vector3D * direction) {
+/**
+ * Get the directions in which a movement from the given position is possible.
+ */
+Direction getDirections(const Point3D * position) {
+  Direction dir = Zero;
+  // if(LED_ROWS > 1) {
+  //   dir = dir | (vector->x == 0 ? Front : vector->x == LED_ROWS ? Back : Front|Back);
+  // }
+  // if(LED_COLUMNS > 1) {
+  //   dir |= vector->y == 0 ? Left : vector->x == LED_COLUMNS ? Right : Left|Right;
+  // }
+  // if(LED_LAYERS > 1) {
+  //   dir |= vector->z == 0 ? Up : vector->z == LED_LAYERS ? Down : Up|Down;
+  // }
+  return dir;
+}
+
+/**
+ * Get the size of set direction flags.
+ */
+uint8_t getSize(Direction directions) {
+  uint8_t size = 0;
+  for (uint8_t i = 0; i < 6; i++) {
+    if (0 < directions & (1 << i)) {
+      size++;
+    }
+  }
+  return size;
+}
+
+/**
+ * Determines whether corner a is a direct neighbour of corner b. For corners of 
+ * a cube this is the case, when only one coordinate between the vectors differs.
+ */
+bool isNextTo(const Vector3D * cornerA, const Vector3D * cornerB) {
+  uint8_t i = cornerA->x != cornerB->x ? 1 : 0;
+  i += cornerA->y != cornerB->y ? 1 : 0;
+  i += cornerA->z != cornerB->z ? 1 : 0;
+  return i == 1;
+}
+
+/**
+ * Indicates whether a point can be moved in the given direction or if it is at 
+ * the boundaries of the cube and cannot move further to that direction.
+ */
+bool canMove(const Point3D * point, const Vector3D * direction) {
   if(point->x + direction->x < 0 || point->x + direction->x > LED_ROWS-1) {
     return false;
   }
@@ -254,13 +251,6 @@ bool canMove(const Vector3D * point, const Vector3D * direction) {
     return false;
   }
   return true;
-}
-
-/**
- * Indicats whether the given vector is the zero vector (0,0,0).
- */
-bool isZeroVector(const Vector3D * vec) {
-  return vec->x == 0 && vec->y == 0 && vec->z == 0; 
 }
 
 /**
@@ -439,6 +429,7 @@ void setLedColorBrightness(uint8_t row, uint8_t columnColorPin, uint8_t layer, u
 ISR(TIMER1_COMPA_vect) {
 
   // SPI.transfer is using byte, so we have to shift out the LED cubes BAM bitmask byte wise
+  // SPI.beginTransaction(settings);
   uint8_t transferByte = 0b00000000;
 
   // there is maybe an offset of unused ports on the shift registers; this depends on the cubes size
@@ -485,11 +476,10 @@ ISR(TIMER1_COMPA_vect) {
       transferByte = 0b00000000;
       shift = 7;
     }
+    // SPI.endTransaction();
   }
 
   // set latch low than high to activate shift registers
-  // PORTD &= 0 << LATCH_PIN;
-  // PORTD |= 1 << LATCH_PIN;
   PORTD |= 1 << LATCH_PIN;
   PORTD &= ~(1 << LATCH_PIN);
   PORTD &= ~(1 << BLANK_PIN);
@@ -527,4 +517,3 @@ uint8_t maxValue(uint8_t bits) {
   }
   return bitValue;
 }
-
